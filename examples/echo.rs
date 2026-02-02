@@ -1,42 +1,36 @@
-//! Example echo server/client using iroh over Tor hidden services.
+//! Example echo server/client using iroh over Nym mixnet.
 //!
-//! This example demonstrates how to use `iroh-tor` for bidirectional communication
-//! over Tor. It requires a running Tor daemon with ControlPort enabled.
+//! This demonstrates bidirectional communication through the Nym mixnet.
+//! Since Nym addresses are 96 bytes and not derivable from the endpoint key,
+//! we use a simple "ticket" format to exchange connection info.
 
-use std::{env, str::FromStr, sync::Arc};
+use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use data_encoding::HEXLOWER;
 use iroh::{
-    Endpoint, EndpointId, SecretKey,
-    endpoint::Connection,
+    Endpoint, SecretKey,
+    endpoint::{AckFrequencyConfig, Connection, QuicTransportConfig, VarInt},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use iroh_tor::TorUserTransport;
-use tokio::time::{sleep, timeout};
+use iroh_base::{EndpointAddr, TransportAddr};
+use iroh_nym::{NymAddr, NymUserTransport};
+use iroh_tickets::endpoint::EndpointTicket;
+use nym_sdk::mixnet::MixnetClient;
+const ALPN: &[u8] = b"iroh-nym/echo/0";
+const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB chunks
 
-const ALPN: &[u8] = b"iroh-tor/user-transport/0";
+/// Minimal QUIC tuning: just reduce ACK frequency.
+/// Default ACKs every 2 packets = 50% overhead. This changes to every 11 packets = ~9% overhead.
+fn nym_transport_config() -> QuicTransportConfig {
+    let mut ack_config = AckFrequencyConfig::default();
+    ack_config
+        .ack_eliciting_threshold(VarInt::from_u32(10)) // ACK every 11 packets instead of 2
+        .reordering_threshold(VarInt::from_u32(10)); // Tolerate more out-of-order packets
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "tor-user-transport",
-    about = "Run an iroh user transport over Tor"
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Accept connections and echo back data.
-    Accept,
-    /// Connect to a remote endpoint and perform a single echo round.
-    Connect {
-        /// Remote endpoint id (base32-hex encoding used by iroh).
-        remote: String,
-    },
+    QuicTransportConfig::builder()
+        .ack_frequency_config(Some(ack_config))
+        .build()
 }
 
 #[derive(Debug, Clone)]
@@ -44,10 +38,50 @@ struct Echo;
 
 impl ProtocolHandler for Echo {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        tracing::info!("Accepted connection from {}", connection.remote_id());
         let (mut send, mut recv) = connection.accept_bi().await?;
-        let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
-        tracing::info!("echo copied {bytes_sent} bytes");
+
+        let start = Instant::now();
+        let mut total = 0u64;
+        let mut buf = vec![0u8; CHUNK_SIZE];
+
+        // Stream data back as we receive it
+        loop {
+            let n = match recv
+                .read(&mut buf)
+                .await
+                .map_err(|e| AcceptError::from(std::io::Error::other(e.to_string())))?
+            {
+                Some(n) => n,
+                None => break,
+            };
+            if n == 0 {
+                break;
+            }
+            send.write_all(&buf[..n])
+                .await
+                .map_err(|e| AcceptError::from(std::io::Error::other(e.to_string())))?;
+            total += n as u64;
+
+            if total % (256 * 1024) == 0 {
+                tracing::info!("  echoed {} KiB...", total / 1024);
+            }
+        }
+
         send.finish()?;
+        let elapsed = start.elapsed();
+        let throughput = if elapsed.as_secs_f64() > 0.0 {
+            (total as f64 / 1024.0) / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        tracing::info!(
+            "Echoed {} KiB in {:.2}s ({:.1} KiB/s)",
+            total / 1024,
+            elapsed.as_secs_f64(),
+            throughput
+        );
+
         connection.closed().await;
         Ok(())
     }
@@ -55,107 +89,202 @@ impl ProtocolHandler for Echo {
 
 fn init_tracing() {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .try_init()
         .ok();
-}
-
-fn load_secret() -> Result<(SecretKey, Option<String>)> {
-    if let Ok(value) = env::var("IROH_SECRET") {
-        let bytes = HEXLOWER
-            .decode(value.as_bytes())
-            .context("invalid IROH_SECRET (expected hex)")?;
-        if bytes.len() != 32 {
-            return Err(anyhow::anyhow!(
-                "invalid IROH_SECRET length (expected 32 bytes)"
-            ));
-        }
-        let key_bytes: [u8; 32] = bytes[..].try_into().expect("length checked");
-        let key = SecretKey::from_bytes(&key_bytes);
-        Ok((key, None))
-    } else {
-        let key = SecretKey::generate(&mut rand::rng());
-        let encoded = HEXLOWER.encode(&key.to_bytes());
-        Ok((key, Some(encoded)))
-    }
-}
-
-async fn connect_with_retry(
-    ep: &Endpoint,
-    id: EndpointId,
-    alpn: &[u8],
-    timeout_per_attempt: std::time::Duration,
-    max_attempts: usize,
-) -> Result<iroh::endpoint::Connection> {
-    let mut last_err: Option<anyhow::Error> = None;
-    for attempt in 1..=max_attempts {
-        tracing::info!("connect attempt {attempt}/{max_attempts}");
-        match timeout(timeout_per_attempt, ep.connect(id, alpn)).await {
-            Ok(Ok(conn)) => return Ok(conn),
-            Ok(Err(err)) => last_err = Some(anyhow::Error::new(err)),
-            Err(err) => last_err = Some(anyhow::anyhow!("connect timed out: {err}")),
-        }
-        if attempt < max_attempts {
-            sleep(std::time::Duration::from_secs(5)).await;
-        }
-    }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("connect failed")))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
 
-    let cli = Cli::parse();
-    let (secret, secret_hint) = load_secret()?;
+    let args: Vec<String> = std::env::args().collect();
+
+    match args.get(1).map(|s| s.as_str()) {
+        Some("accept") => run_accept().await,
+        Some("connect") => {
+            let ticket = args
+                .get(2)
+                .context("usage: echo connect <ticket> [size_kib]")?;
+            let size_kib: usize = args
+                .get(3)
+                .map(|s| s.parse().unwrap_or(1024))
+                .unwrap_or(1024); // Default 1 MiB
+            run_connect(ticket, size_kib).await
+        }
+        _ => {
+            println!("Nym Echo Example");
+            println!();
+            println!("Usage:");
+            println!("  1. Start acceptor:  cargo run --example echo accept");
+            println!("  2. Copy the ticket");
+            println!("  3. Start connector: cargo run --example echo connect <ticket> [size_kib]");
+            println!();
+            println!("Options:");
+            println!("  size_kib  Amount of data to send in KiB (default: 1024 = 1 MiB)");
+            Ok(())
+        }
+    }
+}
+
+async fn run_accept() -> Result<()> {
+    tracing::info!("Connecting to Nym mixnet...");
+    let nym_client = MixnetClient::connect_new().await?;
+    let nym_addr = NymAddr::from_recipient(nym_client.nym_address());
+    tracing::info!("Nym address: {}", nym_addr);
+
+    let transport = Arc::new(NymUserTransport::new(nym_client));
+    let secret = SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret.public();
 
-    println!("EndpointId: {}", endpoint_id);
-    if let Some(hint) = &secret_hint {
-        println!("Set IROH_SECRET={} to reuse this endpoint id.", hint);
+    let ep = Endpoint::builder()
+        .secret_key(secret)
+        .transport_config(nym_transport_config())
+        .clear_ip_transports()
+        .clear_relay_transports()
+        .clear_address_lookup()
+        .add_custom_transport(transport.clone())
+        .bind()
+        .await?;
+
+    // Create ticket with our endpoint info
+    let custom_addr = nym_addr.to_custom_addr();
+    let addr = EndpointAddr::from_parts(endpoint_id, [TransportAddr::Custom(custom_addr)]);
+    let ticket = EndpointTicket::new(addr);
+
+    tracing::info!("");
+    tracing::info!("========================================");
+    tracing::info!("Ticket (copy this for connector):");
+    tracing::info!("{ticket}");
+    tracing::info!("========================================");
+    tracing::info!("");
+
+    let _router = Router::builder(ep).accept(ALPN, Echo).spawn();
+    tracing::info!("Accepting connections (Ctrl-C to exit)...");
+    tokio::signal::ctrl_c().await?;
+
+    Ok(())
+}
+
+async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
+    let ticket: EndpointTicket = ticket_str.parse().context("invalid ticket")?;
+    let addr = ticket.endpoint_addr();
+    tracing::info!("Connecting to endpoint: {}", addr.id);
+
+    tracing::info!("Connecting to Nym mixnet...");
+    let nym_client = MixnetClient::connect_new().await?;
+    let transport = Arc::new(NymUserTransport::new(nym_client));
+
+    let secret = SecretKey::generate(&mut rand::rng());
+    let ep = Endpoint::builder()
+        .secret_key(secret)
+        .transport_config(nym_transport_config())
+        .clear_ip_transports()
+        .clear_relay_transports()
+        .clear_address_lookup()
+        .add_custom_transport(transport)
+        .bind()
+        .await?;
+
+    tracing::info!("Connecting...");
+    let conn = ep.connect(addr.clone(), ALPN).await?;
+    tracing::info!("Connected!");
+
+    let (mut send, mut recv) = conn.open_bi().await?;
+
+    // Generate test data
+    let total_size = size_kib * 1024;
+    tracing::info!("Sending {} KiB of data...", size_kib);
+
+    let start = Instant::now();
+
+    // Send data in chunks
+    let mut sent = 0usize;
+    let mut chunk = vec![0u8; CHUNK_SIZE.min(total_size)];
+    // Fill with pattern for verification
+    for (i, b) in chunk.iter_mut().enumerate() {
+        *b = (i % 256) as u8;
     }
 
-    // Build the transport - this creates the hidden service automatically
-    let transport = TorUserTransport::builder()
-        .build(secret.clone())
-        .await
-        .context("Failed to create Tor transport. Is Tor running with ControlPort 9051?")?;
+    while sent < total_size {
+        let to_send = CHUNK_SIZE.min(total_size - sent);
+        send.write_all(&chunk[..to_send]).await?;
+        sent += to_send;
 
-    // Build the endpoint with the Tor transport
-    let ep = Arc::new(
-        Endpoint::builder()
-            .secret_key(secret)
-            .clear_ip_transports()
-            .clear_relay_transports()
-            .clear_address_lookup()
-            .preset(transport.preset())
-            .bind()
-            .await?,
-    );
-
-    match cli.command {
-        Command::Accept => {
-            let _router = Router::builder((*ep).clone()).accept(ALPN, Echo).spawn();
-            println!("Accepting connections (Ctrl-C to exit)...");
-            tokio::signal::ctrl_c().await?;
+        if sent % (256 * 1024) == 0 || sent == total_size {
+            tracing::info!("  buffered {} KiB...", sent / 1024);
         }
-        Command::Connect { remote } => {
-            let remote_id = EndpointId::from_str(&remote).context("invalid --remote EndpointId")?;
-            let conn = connect_with_retry(
-                ep.as_ref(),
-                remote_id,
-                ALPN,
-                std::time::Duration::from_secs(30),
-                10,
-            )
-            .await?;
-            let (mut send, mut recv) = conn.open_bi().await?;
-            send.write_all(b"hello tor user transport").await?;
-            send.finish()?;
-            let response = recv.read_to_end(1024).await?;
-            println!("Echo response: {}", String::from_utf8_lossy(&response));
+    }
+    send.finish()?;
+    tracing::info!("Data buffered, waiting for echo...");
+
+    // Receive echoed data
+    tracing::info!("Receiving echo...");
+    let recv_start = Instant::now();
+    let mut received = 0usize;
+    let mut recv_buf = vec![0u8; CHUNK_SIZE];
+    let mut errors = 0usize;
+
+    loop {
+        let n = match recv.read(&mut recv_buf).await? {
+            Some(n) => n,
+            None => break,
+        };
+        if n == 0 {
+            break;
+        }
+
+        // Verify data
+        for (i, &b) in recv_buf[..n].iter().enumerate() {
+            let expected = ((received + i) % 256) as u8;
+            if b != expected {
+                errors += 1;
+            }
+        }
+
+        received += n;
+        if received % (256 * 1024) == 0 {
+            tracing::info!("  received {} KiB...", received / 1024);
         }
     }
 
+    let _recv_elapsed = recv_start.elapsed();
+    let total_elapsed = start.elapsed();
+
+    tracing::info!("");
+    tracing::info!("========================================");
+    tracing::info!("Results:");
+    tracing::info!("  Data size:      {} KiB", size_kib);
+    tracing::info!("  Received:       {} KiB", received / 1024);
+    tracing::info!("  Total time:     {:.2}s", total_elapsed.as_secs_f64());
+
+    let throughput = if total_elapsed.as_secs_f64() > 0.0 {
+        (size_kib as f64 * 2.0) / total_elapsed.as_secs_f64() // *2 for send+receive
+    } else {
+        0.0
+    };
+    tracing::info!("  Throughput:     {:.1} KiB/s (round-trip)", throughput);
+
+    // One-way latency estimate (total time / 2 trips / number of packets)
+    let packets_approx = (size_kib * 1024) / 1200; // ~1200 bytes per QUIC packet
+    if packets_approx > 0 {
+        let latency_per_packet = total_elapsed.as_secs_f64() / 2.0 / packets_approx as f64;
+        tracing::info!(
+            "  Latency/packet: ~{:.0}ms (estimated)",
+            latency_per_packet * 1000.0
+        );
+    }
+
+    if errors > 0 {
+        tracing::info!("  ERRORS:         {} bytes corrupted!", errors);
+    } else {
+        tracing::info!("  Verification:   OK");
+    }
+    tracing::info!("========================================");
+
+    conn.close(0u8.into(), b"done");
     Ok(())
 }
