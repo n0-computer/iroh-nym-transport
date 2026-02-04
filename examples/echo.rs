@@ -14,13 +14,13 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::{EndpointAddr, TransportAddr};
-use iroh_nym::{NymAddr, NymUserTransport};
+use iroh_nym_transport::{NymAddr, NymUserTransport};
 use iroh_tickets::endpoint::EndpointTicket;
 use nym_sdk::mixnet::MixnetClient;
 const ALPN: &[u8] = b"iroh-nym/echo/0";
 const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB chunks
 
-/// Minimal QUIC tuning: just reduce ACK frequency.
+/// QUIC tuning for Nym network: reduce ACK overhead.
 /// Default ACKs every 2 packets = 50% overhead. This changes to every 11 packets = ~9% overhead.
 fn nym_transport_config() -> QuicTransportConfig {
     let mut ack_config = AckFrequencyConfig::default();
@@ -224,9 +224,11 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
     // Receive echoed data
     tracing::info!("Receiving echo...");
     let recv_start = Instant::now();
+    let mut last_recv = recv_start;
     let mut received = 0usize;
     let mut recv_buf = vec![0u8; CHUNK_SIZE];
     let mut errors = 0usize;
+    let mut recv_count = 0usize;
 
     loop {
         let n = match recv.read(&mut recv_buf).await? {
@@ -236,6 +238,20 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
         if n == 0 {
             break;
         }
+        recv_count += 1;
+        let now = Instant::now();
+        let since_last = now.duration_since(last_recv);
+        let since_start = now.duration_since(recv_start);
+
+        tracing::info!(
+            "[recv #{}] {} bytes after {:.0}ms (total: {} KiB in {:.1}s)",
+            recv_count,
+            n,
+            since_last.as_secs_f64() * 1000.0,
+            (received + n) / 1024,
+            since_start.as_secs_f64()
+        );
+        last_recv = now;
 
         // Verify data
         for (i, &b) in recv_buf[..n].iter().enumerate() {
@@ -246,9 +262,6 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
         }
 
         received += n;
-        if received % (256 * 1024) == 0 {
-            tracing::info!("  received {} KiB...", received / 1024);
-        }
     }
 
     let _recv_elapsed = recv_start.elapsed();

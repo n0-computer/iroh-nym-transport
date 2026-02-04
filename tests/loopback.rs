@@ -8,7 +8,7 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::{EndpointAddr, TransportAddr};
-use iroh_nym::{NymAddr, NymUserTransport};
+use iroh_nym_transport::{NymAddr, NymUserTransport};
 use nym_sdk::mixnet::MixnetClient;
 
 const ALPN: &[u8] = b"iroh-nym/echo/0";
