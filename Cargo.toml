@@ -6,7 +6,9 @@ description = "Nym mixnet transport for iroh"
 license = "MIT OR Apache-2.0"
 authors = ["Rüdiger Klaehn <rklaehn@protonmail.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh-nym-transport"
-keywords = ["iroh", "nym", "mixnet", "p2p", "networking", "privacy"]
+readme = "README.md"
+keywords = ["iroh", "nym", "mixnet", "p2p", "privacy"]
+categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 nym-sdk = "1.20"
