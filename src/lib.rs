@@ -3,7 +3,7 @@
 //! This crate provides a custom transport for iroh that routes packets through
 //! the Nym mixnet.
 
-use std::{future::Future, io, pin::Pin, str::FromStr, sync::Arc};
+use std::{future::Future, io, num::NonZeroUsize, pin::Pin, str::FromStr, sync::Arc};
 
 use bytes::Bytes;
 use iroh::endpoint::{
@@ -342,8 +342,8 @@ impl CustomSender for NymUserSender {
     ) -> std::task::Poll<io::Result<()>> {
         // First, check if we have a pending send and poll it
         let mut pending = self.pending.try_lock().ok();
-        if let Some(ref mut guard) = pending {
-            if let Some(ref mut fut) = **guard {
+        if let Some(ref mut guard) = pending
+            && let Some(ref mut fut) = **guard {
                 match fut.as_mut().poll(cx) {
                     std::task::Poll::Ready(Ok(())) => {
                         **guard = None; // Clear completed future
@@ -360,7 +360,6 @@ impl CustomSender for NymUserSender {
                     }
                 }
             }
-        }
         drop(pending); // Release lock before potentially creating new future
 
         let recipient =
@@ -369,8 +368,7 @@ impl CustomSender for NymUserSender {
         // Build packet
         let segment_size = transmit
             .segment_size
-            .map(|s| u16::try_from(s).ok())
-            .flatten();
+            .and_then(|s| u16::try_from(s).ok());
 
         let packet = NymPacket::new(self.local_addr.0, segment_size, transmit.contents.to_vec());
 
@@ -419,6 +417,12 @@ impl CustomSender for NymUserSender {
 impl CustomEndpoint for NymUserEndpoint {
     fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>> {
         self.watchable.watch()
+    }
+
+    fn max_transmit_segments(&self) -> NonZeroUsize {
+        // Nym mixnet doesn't support GSO batching at the network level,
+        // so we transmit one segment at a time
+        NonZeroUsize::MIN
     }
 
     fn create_sender(&self) -> Arc<dyn CustomSender> {
