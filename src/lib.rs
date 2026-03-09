@@ -14,7 +14,7 @@ use iroh::endpoint::{
 use iroh_base::CustomAddr;
 use n0_watcher::Watchable;
 use nym_sdk::mixnet::{MixnetClient, MixnetClientSender, MixnetMessageSender, Recipient};
-use quinn_udp::RecvMeta;
+use noq_udp::RecvMeta;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 

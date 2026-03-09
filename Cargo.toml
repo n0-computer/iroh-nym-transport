@@ -13,14 +13,14 @@ categories = ["network-programming", "asynchronous"]
 [dependencies]
 nym-sdk = "1.20"
 tokio = { version = "1", features = ["full"] }
-iroh = { git = "https://github.com/n0-computer/iroh", branch = "feat-user-transport-2", features = ["unstable-custom-transports"] }
-iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "feat-user-transport-2" }
+iroh = { git = "https://github.com/n0-computer/iroh", features = ["unstable-custom-transports"] }
+iroh-base = { git = "https://github.com/n0-computer/iroh" }
 iroh-tickets = "0.3"
 n0-error = "0.1"
 bytes = "1"
 n0-watcher = "0.6"
 n0-future = "0.3"
-quinn-udp = { package = "iroh-quinn-udp", version = "0.8" }
+noq-udp = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
@@ -31,10 +31,14 @@ postcard = "1"
 anyhow = "1"
 base64 = "0.22"
 rand = "0.9"
-iroh-quinn-proto = "0.15"
+noq-proto = "0.15"
 
 [patch.crates-io]
-iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "feat-user-transport-2" }
+iroh-base = { git = "https://github.com/n0-computer/iroh" }
+noq = { git = "https://github.com/n0-computer/noq" }
+noq-proto = { git = "https://github.com/n0-computer/noq" }
+noq-udp = { git = "https://github.com/n0-computer/noq" }
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "netwatch-noq" }
 
 [[example]]
 name = "hello"
