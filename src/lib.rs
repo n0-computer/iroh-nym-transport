@@ -13,8 +13,8 @@ use iroh::endpoint::{
 };
 use iroh_base::CustomAddr;
 use n0_watcher::Watchable;
-use nym_sdk::mixnet::{MixnetClient, MixnetClientSender, MixnetMessageSender, Recipient};
 use noq_udp::RecvMeta;
+use nym_sdk::mixnet::{MixnetClient, MixnetClientSender, MixnetMessageSender, Recipient};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -343,32 +343,29 @@ impl CustomSender for NymUserSender {
         // First, check if we have a pending send and poll it
         let mut pending = self.pending.try_lock().ok();
         if let Some(ref mut guard) = pending
-            && let Some(ref mut fut) = **guard {
-                match fut.as_mut().poll(cx) {
-                    std::task::Poll::Ready(Ok(())) => {
-                        **guard = None; // Clear completed future
-                        return std::task::Poll::Ready(Ok(()));
-                    }
-                    std::task::Poll::Ready(Err(_)) => {
-                        **guard = None;
-                        return std::task::Poll::Ready(Err(io::Error::other(
-                            "send channel closed",
-                        )));
-                    }
-                    std::task::Poll::Pending => {
-                        return std::task::Poll::Pending;
-                    }
+            && let Some(ref mut fut) = **guard
+        {
+            match fut.as_mut().poll(cx) {
+                std::task::Poll::Ready(Ok(())) => {
+                    **guard = None; // Clear completed future
+                    return std::task::Poll::Ready(Ok(()));
+                }
+                std::task::Poll::Ready(Err(_)) => {
+                    **guard = None;
+                    return std::task::Poll::Ready(Err(io::Error::other("send channel closed")));
+                }
+                std::task::Poll::Pending => {
+                    return std::task::Poll::Pending;
                 }
             }
+        }
         drop(pending); // Release lock before potentially creating new future
 
         let recipient =
             from_custom_addr(dst).ok_or_else(|| io::Error::other("invalid Nym address"))?;
 
         // Build packet
-        let segment_size = transmit
-            .segment_size
-            .and_then(|s| u16::try_from(s).ok());
+        let segment_size = transmit.segment_size.and_then(|s| u16::try_from(s).ok());
 
         let packet = NymPacket::new(self.local_addr.0, segment_size, transmit.contents.to_vec());
 

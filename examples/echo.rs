@@ -10,7 +10,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use iroh::{
     Endpoint, SecretKey,
-    endpoint::{AckFrequencyConfig, Connection, QuicTransportConfig, VarInt},
+    endpoint::{AckFrequencyConfig, Connection, QuicTransportConfig, VarInt, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::{EndpointAddr, TransportAddr};
@@ -140,7 +140,7 @@ async fn run_accept() -> Result<()> {
     let secret = SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret.public();
 
-    let ep = Endpoint::builder()
+    let ep = Endpoint::builder(presets::N0)
         .secret_key(secret)
         .transport_config(nym_transport_config())
         .clear_ip_transports()
@@ -179,7 +179,7 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
     let transport = Arc::new(NymUserTransport::new(nym_client));
 
     let secret = SecretKey::generate(&mut rand::rng());
-    let ep = Endpoint::builder()
+    let ep = Endpoint::builder(presets::N0)
         .secret_key(secret)
         .transport_config(nym_transport_config())
         .clear_ip_transports()
