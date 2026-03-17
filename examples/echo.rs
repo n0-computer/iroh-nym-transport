@@ -63,7 +63,7 @@ impl ProtocolHandler for Echo {
                 .map_err(|e| AcceptError::from(std::io::Error::other(e.to_string())))?;
             total += n as u64;
 
-            if total % (256 * 1024) == 0 {
+            if total.is_multiple_of(256 * 1024) {
                 tracing::info!("  echoed {} KiB...", total / 1024);
             }
         }
@@ -214,7 +214,7 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
         send.write_all(&chunk[..to_send]).await?;
         sent += to_send;
 
-        if sent % (256 * 1024) == 0 || sent == total_size {
+        if sent.is_multiple_of(256 * 1024) || sent == total_size {
             tracing::info!("  buffered {} KiB...", sent / 1024);
         }
     }
