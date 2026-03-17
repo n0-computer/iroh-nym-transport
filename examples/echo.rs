@@ -10,7 +10,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use iroh::{
     Endpoint, SecretKey,
-    endpoint::{AckFrequencyConfig, Connection, QuicTransportConfig, VarInt},
+    endpoint::{AckFrequencyConfig, Connection, QuicTransportConfig, VarInt, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::{EndpointAddr, TransportAddr};
@@ -63,7 +63,7 @@ impl ProtocolHandler for Echo {
                 .map_err(|e| AcceptError::from(std::io::Error::other(e.to_string())))?;
             total += n as u64;
 
-            if total % (256 * 1024) == 0 {
+            if total.is_multiple_of(256 * 1024) {
                 tracing::info!("  echoed {} KiB...", total / 1024);
             }
         }
@@ -140,7 +140,7 @@ async fn run_accept() -> Result<()> {
     let secret = SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret.public();
 
-    let ep = Endpoint::builder()
+    let ep = Endpoint::builder(presets::N0)
         .secret_key(secret)
         .transport_config(nym_transport_config())
         .clear_ip_transports()
@@ -179,7 +179,7 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
     let transport = Arc::new(NymUserTransport::new(nym_client));
 
     let secret = SecretKey::generate(&mut rand::rng());
-    let ep = Endpoint::builder()
+    let ep = Endpoint::builder(presets::N0)
         .secret_key(secret)
         .transport_config(nym_transport_config())
         .clear_ip_transports()
@@ -214,7 +214,7 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
         send.write_all(&chunk[..to_send]).await?;
         sent += to_send;
 
-        if sent % (256 * 1024) == 0 || sent == total_size {
+        if sent.is_multiple_of(256 * 1024) || sent == total_size {
             tracing::info!("  buffered {} KiB...", sent / 1024);
         }
     }

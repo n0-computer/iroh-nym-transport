@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use iroh::{
     Endpoint, SecretKey,
-    endpoint::Connection,
+    endpoint::{Connection, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::{EndpointAddr, TransportAddr};
@@ -59,7 +59,7 @@ async fn loopback_echo() {
     let secret1 = SecretKey::generate(&mut rand::rng());
     let endpoint_id1 = secret1.public();
 
-    let ep1 = Endpoint::builder()
+    let ep1 = Endpoint::builder(presets::N0)
         .secret_key(secret1)
         .clear_ip_transports()
         .clear_relay_transports()
@@ -77,7 +77,7 @@ async fn loopback_echo() {
     let transport2 = Arc::new(NymUserTransport::new(nym_client2));
     let secret2 = SecretKey::generate(&mut rand::rng());
 
-    let ep2 = Endpoint::builder()
+    let ep2 = Endpoint::builder(presets::N0)
         .secret_key(secret2)
         .clear_ip_transports()
         .clear_relay_transports()
