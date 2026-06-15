@@ -13,14 +13,14 @@ categories = ["network-programming", "asynchronous"]
 [dependencies]
 nym-sdk = "1.20"
 tokio = { version = "1", features = ["full"] }
-iroh = { version = "0.97", features = ["unstable-custom-transports"] }
-iroh-base = "0.97"
-iroh-tickets = "0.4"
+iroh = { version = "1.0", features = ["unstable-custom-transports"] }
+iroh-base = "1.0"
+iroh-tickets = "1.0"
 n0-error = "0.1"
 bytes = "1"
-n0-watcher = "0.6"
+n0-watcher = "1.0"
 n0-future = "0.3"
-noq-udp = "0.9"
+noq-udp = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
@@ -30,7 +30,6 @@ postcard = "1"
 [dev-dependencies]
 anyhow = "1"
 base64 = "0.22"
-rand = "0.9"
 noq-proto = "0.16"
 
 [[example]]

@@ -9,7 +9,7 @@ use bytes::Bytes;
 use iroh::endpoint::{
     Builder,
     presets::Preset,
-    transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+    transports::{CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit},
 };
 use iroh_base::CustomAddr;
 use n0_watcher::Watchable;
@@ -338,6 +338,7 @@ impl CustomSender for NymUserSender {
         &self,
         cx: &mut std::task::Context,
         dst: &CustomAddr,
+        _src: Option<&CustomAddr>,
         transmit: &Transmit<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         // First, check if we have a pending send and poll it
@@ -435,9 +436,9 @@ impl CustomEndpoint for NymUserEndpoint {
         cx: &mut std::task::Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [RecvMeta],
-        source_addrs: &mut [Addr],
+        recv_infos: &mut [RecvInfo],
     ) -> std::task::Poll<io::Result<usize>> {
-        let n = bufs.len().min(metas.len()).min(source_addrs.len());
+        let n = bufs.len().min(metas.len()).min(recv_infos.len());
         if n == 0 {
             return std::task::Poll::Ready(Ok(0));
         }
@@ -488,7 +489,7 @@ impl CustomEndpoint for NymUserEndpoint {
                         .segment_size
                         .map(|s| s as usize)
                         .unwrap_or(packet.data.len());
-                    source_addrs[filled] = Addr::Custom(source.to_custom_addr());
+                    recv_infos[filled] = RecvInfo::new(source.to_custom_addr(), None);
                     filled += 1;
                 }
             }

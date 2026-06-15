@@ -57,7 +57,7 @@ QUIC was designed for low-latency internet connections. Running it over Nym requ
 
 ```rust
 use std::sync::Arc;
-use iroh::{Endpoint, SecretKey};
+use iroh::{Endpoint, SecretKey, endpoint::presets};
 use iroh_nym_transport::{NymAddr, NymUserTransport};
 use nym_sdk::mixnet::MixnetClient;
 
@@ -67,9 +67,9 @@ let nym_addr = NymAddr::from_recipient(nym_client.nym_address());
 
 // Create transport and endpoint
 let transport = Arc::new(NymUserTransport::new(nym_client));
-let secret = SecretKey::generate(&mut rand::rng());
+let secret = SecretKey::generate();
 
-let endpoint = Endpoint::builder()
+let endpoint = Endpoint::builder(presets::N0)
     .secret_key(secret)
     .clear_ip_transports()      // Disable direct UDP
     .clear_relay_transports()   // Disable relays
@@ -94,7 +94,7 @@ cargo run --example echo connect <ticket> [size_kib]
 
 - Rust 2024 edition
 - Active Nym network connection (testnet or mainnet)
-- The `iroh` crate with custom transport support (currently on `feat-user-transport-2` branch)
+- `iroh` 1.0 with the `unstable-custom-transports` feature enabled
 
 ## License
 

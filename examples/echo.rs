@@ -137,7 +137,7 @@ async fn run_accept() -> Result<()> {
     tracing::info!("Nym address: {}", nym_addr);
 
     let transport = Arc::new(NymUserTransport::new(nym_client));
-    let secret = SecretKey::generate(&mut rand::rng());
+    let secret = SecretKey::generate();
     let endpoint_id = secret.public();
 
     let ep = Endpoint::builder(presets::N0)
@@ -178,7 +178,7 @@ async fn run_connect(ticket_str: &str, size_kib: usize) -> Result<()> {
     let nym_client = MixnetClient::connect_new().await?;
     let transport = Arc::new(NymUserTransport::new(nym_client));
 
-    let secret = SecretKey::generate(&mut rand::rng());
+    let secret = SecretKey::generate();
     let ep = Endpoint::builder(presets::N0)
         .secret_key(secret)
         .transport_config(nym_transport_config())
