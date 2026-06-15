@@ -56,7 +56,7 @@ async fn loopback_echo() {
 
     // Create acceptor endpoint
     let transport1 = Arc::new(NymUserTransport::new(nym_client1));
-    let secret1 = SecretKey::generate(&mut rand::rng());
+    let secret1 = SecretKey::generate();
     let endpoint_id1 = secret1.public();
 
     let ep1 = Endpoint::builder(presets::N0)
@@ -75,7 +75,7 @@ async fn loopback_echo() {
 
     // Create connector endpoint
     let transport2 = Arc::new(NymUserTransport::new(nym_client2));
-    let secret2 = SecretKey::generate(&mut rand::rng());
+    let secret2 = SecretKey::generate();
 
     let ep2 = Endpoint::builder(presets::N0)
         .secret_key(secret2)
